@@ -94,10 +94,17 @@ def view_sample_graph(graph: nx.Graph, n: int = 50) -> nx.Graph:
     sample_nodes = np.random.choice(list(graph.nodes), n)
     sample_graph = graph.subgraph(sample_nodes)
 
-    pos = nx.spring_layout(sample_graph)
 
-    plt.figure(figsize=(10, 10))
-    nx.draw(sample_graph, pos, with_labels=True, node_size=300, font_size=10)
+    plt.figure(figsize=(20, 20))
+
+    pos = nx.spring_layout(sample_graph)
+    nx.draw(
+        sample_graph,
+        pos,
+        with_labels=True,
+        node_size=300,
+        font_size=10,
+    )
     plt.axis("off")
     plt.title(f"Sample Graph with {n} Nodes")
     plt.show()
