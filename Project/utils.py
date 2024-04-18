@@ -358,6 +358,7 @@ def plot_community_graph(
     community_idx,
     SELECTED_TOPIC,
     ax=None,
+    type="after",
 ):
     """
     Plots a graph for a given community.
@@ -368,6 +369,8 @@ def plot_community_graph(
     - community_lens (dict): A dictionary mapping community indices to their lengths.
     - community_idx (int): The index of the community to plot.
     - SELECTED_TOPIC (str): The selected topic.
+    - ax (matplotlib.axes.Axes): The matplotlib axes to plot on. Default is None.
+    - type (str): The type of data being plotted. Default is 'After'.
     """
 
     if ax is None:
@@ -416,7 +419,7 @@ def plot_community_graph(
     nx.draw_networkx_labels(G_filtered_community, pos, labels, font_size=12, ax=ax)
 
     ax.set_title(
-        f"Network plot for Community {community_idx} with {community_lens[community_idx]} nodes\nTopic: {SELECTED_TOPIC}\nNode size based on influencer score"
+        f"[{type.upper()}] Network plot for Community {community_idx} with {community_lens[community_idx]} nodes\nTopic: {SELECTED_TOPIC}\nNode size based on influencer score"
     )
 
     ax.patch.set_edgecolor("black")
@@ -528,3 +531,181 @@ def get_community_dataframe(G):
     ).sort_values(by="degree_centrality", ascending=False)
 
     return community_nodes_df
+
+
+def show_community_before_after(
+    G_after,
+    G_before,
+    communities,
+    community_lens,
+    SELECTED_COMMUNITY_IDX,
+    SELECTED_TOPIC,
+    submissions_after,
+    submissions_before,
+    comments_after,
+    comments_before,
+):
+    fig, axes = plt.subplots(1, 2, figsize=(30, 15))
+    ax1, ax2 = axes
+
+    # Create subgraphs for the selected community before and after
+    subgraph_before = nx.subgraph(G_before, communities[SELECTED_COMMUNITY_IDX]).copy()
+    subgraph_after = nx.subgraph(G_after, communities[SELECTED_COMMUNITY_IDX]).copy()
+
+    # Plot community graphs
+    G_community_before3m = plot_community_graph(
+        subgraph_before,
+        community_lens,
+        SELECTED_COMMUNITY_IDX,
+        SELECTED_TOPIC,
+        ax=ax1,
+        type="before",
+    )
+    G_community = plot_community_graph(
+        subgraph_after,
+        community_lens,
+        SELECTED_COMMUNITY_IDX,
+        SELECTED_TOPIC,
+        ax=ax2,
+        type="after",
+    )
+
+    # Remove self-loops
+    G_community.remove_edges_from(nx.selfloop_edges(G_community))
+    G_community_before3m.remove_edges_from(nx.selfloop_edges(G_community_before3m))
+
+    plt.tight_layout()
+    plt.savefig(
+        f"./graphs/{SELECTED_TOPIC}_community_{SELECTED_COMMUNITY_IDX}_over_time.png",
+        dpi=300,
+    )
+    plt.show()
+
+    # Get community dataframes
+    G_community_df = get_community_dataframe(G_community)
+    G_community_before3m_df = get_community_dataframe(G_community_before3m)
+
+    # Number of posts
+    num_posts_t = submissions_after.groupby("author").agg(num_posts=("id", "nunique"))
+    num_posts_t_before_3m = submissions_before.groupby("author").agg(
+        num_posts=("id", "nunique")
+    )
+
+    # Number of posts commented on
+    num_posts_commented_on_t = comments_after.groupby("author").agg(
+        num_posts_commented_on=("submission_id", "nunique")
+    )
+    num_posts_commented_on_t_before_3m = comments_before.groupby("author").agg(
+        num_posts_commented_on=("submission_id", "nunique")
+    )
+
+    author_metrics_t = (
+        (
+            G_community_df.set_index("author")
+            .merge(num_posts_t, left_index=True, right_index=True, how="left")
+            .merge(
+                num_posts_commented_on_t, left_index=True, right_index=True, how="left"
+            )
+        )
+        .sort_values(by="influencer_score", ascending=False)
+        .fillna(0)
+        .reset_index()
+    )
+
+    author_metrics_t_before_3m = (
+        (
+            G_community_before3m_df.set_index("author")
+            .merge(num_posts_t_before_3m, left_index=True, right_index=True, how="left")
+            .merge(
+                num_posts_commented_on_t_before_3m,
+                left_index=True,
+                right_index=True,
+                how="left",
+            )
+        )
+        .sort_values(by="influencer_score", ascending=False)
+        .fillna(0)
+        .reset_index()
+    )
+
+    # Combine metrics and sort
+    author_metrics_overall_t = pd.concat(
+        [
+            author_metrics_t.assign(time="after"),
+            author_metrics_t_before_3m.assign(time="before"),
+        ]
+    )
+    core_numbers = pd.concat(
+        [
+            pd.DataFrame(
+                list(nx.algorithms.core.core_number(G_community).items()),
+                columns=["author", "core_number"],
+            ).assign(time="after"),
+            pd.DataFrame(
+                list(nx.algorithms.core.core_number(G_community_before3m).items()),
+                columns=["author", "core_number"],
+            ).assign(time="before"),
+        ]
+    )
+    author_metrics_overall_t = core_numbers.merge(
+        author_metrics_overall_t, on=["author", "time"], how="inner"
+    ).sort_values(by="influencer_score", ascending=False)
+
+    return G_community, G_community_before3m, author_metrics_overall_t
+
+
+def analyze_community(
+    G_after,
+    G_before,
+    communities,
+    community_lens,
+    SELECTED_COMMUNITY_IDX,
+    SELECTED_TOPIC,
+    submissions_after,
+    submissions_before,
+    comments_after,
+    comments_before,
+):
+    (
+        G_community,
+        G_community_before3m,
+        author_metrics_overall_t,
+    ) = show_community_before_after(
+        G_after,
+        G_before,
+        communities,
+        community_lens,
+        SELECTED_COMMUNITY_IDX,
+        SELECTED_TOPIC,
+        submissions_after,
+        submissions_before,
+        comments_after,
+        comments_before,
+    )
+
+    metrics = author_metrics_overall_t.pivot_table(
+        index="author",
+        columns="time",
+        values=[
+            "num_comments",
+            "num_posts",
+            "num_posts_commented_on",
+            "influencer_score",
+            "core_number",
+            "degree_centrality",
+            "betweenness_centrality",
+        ],
+        aggfunc="mean",
+    ).sort_values(("influencer_score", "after"), ascending=False)
+
+    return G_community, G_community_before3m, author_metrics_overall_t, metrics
+
+
+def get_posts_by_community(submission_t, comments_t, metrics):
+    posts_community = submission_t[
+        submission_t["id"].isin(
+            comments_t[comments_t["author"].isin(metrics.index)].submission_id.unique()
+        )
+    ]
+
+    return posts_community
