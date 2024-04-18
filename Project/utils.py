@@ -17,12 +17,17 @@ import pandas as pd
 from pandas.api.typing import JsonReader
 from tqdm import tqdm
 
+from transformers import pipeline
+
 tqdm.pandas()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("UTILS")
 
 BASE_URL = "https://the-eye.eu/redarcs/files/"
+MODEL_PATH = "mrm8488/distilroberta-finetuned-financial-news-sentiment-analysis"
+
+sentiment_classifier = pipeline(model=MODEL_PATH)
 
 
 def get_input_files(
@@ -387,12 +392,12 @@ def plot_community_graph(
     top_degree_nodes = sorted(
         G_filtered_community.nodes(data=True),
         key=lambda x: x[1].get("degree_centrality", 0),
-    )[-20:]
+    )[-10:]
 
     top_betweenness_nodes = sorted(
         G_filtered_community.nodes(data=True),
         key=lambda x: x[1].get("betweenness_centrality", 0),
-    )[-20:]
+    )[-10:]
 
     nodes_label = top_degree_nodes + top_betweenness_nodes
 
@@ -776,7 +781,7 @@ def show_top_influencers(metrics, SELECTED_COMMUNITY_IDX, SELECTED_TOPIC):
         y="author",
         x="value",
         hue="time",
-        palette="tab10",
+        palette="viridis",
         dodge=True,
         s=10,
     )
@@ -813,18 +818,20 @@ def show_word_comparison(
     - SELECTED_TOPIC (str): The selected topic.
     """
     # Show top words before and after in post title
+    word_counts_after = (
+        posts_after["clean_title"].apply(str.split).explode().value_counts()
+    )
+    word_counts_before = (
+        posts_before["clean_title"].apply(str.split).explode().value_counts()
+    )
+
+    total_after = word_counts_after.sum()
+    total_before = word_counts_before.sum()
+
     word_comparison = pd.DataFrame(
         {
-            "After 3 months": posts_after["clean_title"]
-            .apply(str.split)
-            .explode()
-            .value_counts()
-            .head(20),
-            "Before 3 months": posts_before["clean_title"]
-            .apply(str.split)
-            .explode()
-            .value_counts()
-            .head(20),
+            "After 3 months": (word_counts_after / total_after).head(10),
+            "Before 3 months": (word_counts_before / total_before).head(10),
         }
     ).sort_values("After 3 months", ascending=False)
 
@@ -835,13 +842,14 @@ def show_word_comparison(
         y="clean_title",
         x="value",
         hue="variable",
-        palette="tab10",
+        palette="viridis",
     )
 
     plt.title(
         f"Comparison of Word Frequencies Before and After 3 Months\nCommunity {SELECTED_COMMUNITY_IDX}\nTopic: {SELECTED_TOPIC}"
     )
-    plt.xlabel("Frequency")
+    
+    plt.xlabel("Word Frequency")
     plt.ylabel("Words in Post Titles")
 
     plt.legend(title="Time Period")
@@ -854,3 +862,107 @@ def show_word_comparison(
     plt.show()
 
     return word_comparison
+
+
+def get_sentiment(comments):
+    """
+    Retrieves sentiment scores for comments.
+
+    Parameters:
+    - comments (pd.DataFrame): The DataFrame containing comments.
+    """
+    comments["sentiment"] = comments["body"].progress_apply(
+        lambda x: sentiment_classifier(x)[0]["label"]
+    )
+
+    return comments
+
+
+def get_top_influencers(metrics, comments_after, comments_before):
+    """
+    Retrieves the top influencers based on influencer scores and sentiment scores for comments.
+    This method also calculates sentiment scores for comments.
+
+    Parameters:
+    - metrics (pd.DataFrame): The DataFrame containing metrics for community members.
+    - comments_after (pd.DataFrame): The DataFrame containing comments after.
+    - comments_before (pd.DataFrame): The DataFrame containing comments before.
+    """
+
+    top_influencers = (
+        metrics["influencer_score"]
+        .dropna()
+        .sort_values(by="after", ascending=False)
+        .head(10)
+        .index.tolist()
+    )
+
+    top_influencer_comments_after = comments_after[
+        comments_after["author"].isin(top_influencers)
+    ]
+
+    top_influencer_comments_before = comments_before[
+        comments_before["author"].isin(top_influencers)
+    ]
+
+    influencer_comments = pd.concat(
+        [
+            top_influencer_comments_after.assign(time="after"),
+            top_influencer_comments_before.assign(time="before"),
+        ],
+        axis=0,
+    )
+
+    influencer_comments = get_sentiment(influencer_comments)
+
+    influencer_comments["sentiment_score"] = influencer_comments["sentiment"].map(
+        {"positive": 1, "negative": -1, "neutral": 0}
+    )
+
+    sentiment_score_comparison = (
+        influencer_comments.groupby(["author", "time"])["sentiment_score"]
+        .mean()
+        .unstack()
+        .sort_values(by="after", ascending=False)
+    )
+
+    return influencer_comments, sentiment_score_comparison
+
+
+def show_sentiment_comparison(
+    sentiment_score_comparison, SELECTED_COMMUNITY_IDX, SELECTED_TOPIC
+):
+    """
+    Shows a comparison of sentiment scores for top influencers in a community.
+
+    Parameters:
+    - sentiment_score_comparison (pd.DataFrame): The DataFrame containing sentiment scores.
+    """
+
+    plt.figure(figsize=(16, 9))
+
+    sns.barplot(
+        data=pd.melt(sentiment_score_comparison.reset_index(), id_vars="author"),
+        y="author",
+        x="value",
+        hue="time",
+        palette="viridis",
+    )
+
+    plt.title(
+        f"Sentiment Score Comparison for Top Influencers\nCommunity: {SELECTED_COMMUNITY_IDX}\nTopic: {SELECTED_TOPIC}"
+    )
+
+    plt.xlabel("Sentiment Score")
+    plt.ylabel("Author")
+    plt.legend(title="Time")
+
+    plt.tight_layout()
+
+    plt.savefig(
+        f"graphs/sentiment_score_comparison_{SELECTED_COMMUNITY_IDX}_{SELECTED_TOPIC}.png"
+    )
+
+    plt.show()
+
+    return None
