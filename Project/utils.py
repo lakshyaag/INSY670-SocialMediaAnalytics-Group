@@ -10,6 +10,7 @@ import os
 
 import httpx
 import matplotlib.pyplot as plt
+import seaborn as sns
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -340,7 +341,7 @@ def get_communities(G, resolution=1):
     """
 
     communities = nx.community.louvain_communities(
-        G, weight="weight", seed=42, resolution=resolution, backend="cugraph"
+        G, weight="weight", seed=42, resolution=resolution
     )
     # Add community as node attribute to the graph
     for community_idx, community in enumerate(communities):
@@ -361,7 +362,7 @@ def plot_community_graph(
     type="after",
 ):
     """
-    Plots a graph for a given community.
+    Plots a graph for a given community. Size of nodes is based on influencer scores. Labels are based on top degree and betweenness centrality scores.
 
     Parameters:
     - G_filtered_community (nx.Graph): The input graph.
@@ -386,12 +387,12 @@ def plot_community_graph(
     top_degree_nodes = sorted(
         G_filtered_community.nodes(data=True),
         key=lambda x: x[1].get("degree_centrality", 0),
-    )[-15:]
+    )[-20:]
 
     top_betweenness_nodes = sorted(
         G_filtered_community.nodes(data=True),
         key=lambda x: x[1].get("betweenness_centrality", 0),
-    )[-15:]
+    )[-20:]
 
     nodes_label = top_degree_nodes + top_betweenness_nodes
 
@@ -454,7 +455,7 @@ def get_filtered_topic_graph(
     largest_component=True,
 ):
     """
-    Retrieves a filtered graph for a given topic.
+    Retrieves a filtered graph for a given topic from submissions and comments.
 
     Parameters:
     - SELECTED_TOPIC (str): The selected topic.
@@ -545,6 +546,22 @@ def show_community_before_after(
     comments_after,
     comments_before,
 ):
+    """
+    Shows the community before and after based on the selected community index and topic.
+    This method also calculates metrics for the community members in both time periods.
+
+    Parameters:
+    - G_after (nx.Graph): The graph after
+    - G_before (nx.Graph): The graph before
+    - communities (list): The list of communities.
+    - community_lens (dict): A dictionary mapping community indices to their lengths.
+    - SELECTED_COMMUNITY_IDX (int): The selected community index.
+    - SELECTED_TOPIC (str): The selected topic.
+    - submissions_after (pd.DataFrame): The DataFrame containing submissions after.
+    - submissions_before (pd.DataFrame): The DataFrame containing submissions before.
+    - comments_after (pd.DataFrame): The DataFrame containing comments after.
+    - comments_before (pd.DataFrame): The DataFrame containing comments before.
+    """
     fig, axes = plt.subplots(1, 2, figsize=(30, 15))
     ax1, ax2 = axes
 
@@ -576,7 +593,7 @@ def show_community_before_after(
 
     plt.tight_layout()
     plt.savefig(
-        f"./graphs/{SELECTED_TOPIC}_community_{SELECTED_COMMUNITY_IDX}_over_time.png",
+        f"./graphs/community_comparison_{SELECTED_COMMUNITY_IDX}_{SELECTED_TOPIC}.png",
         dpi=300,
     )
     plt.show()
@@ -666,6 +683,21 @@ def analyze_community(
     comments_after,
     comments_before,
 ):
+    """
+    Analyzes a community before and after based on the selected community index and topic.
+
+    Parameters:
+    - G_after (nx.Graph): The graph after
+    - G_before (nx.Graph): The graph before
+    - communities (list): The list of communities.
+    - community_lens (dict): A dictionary mapping community indices to their lengths.
+    - SELECTED_COMMUNITY_IDX (int): The selected community index.
+    - SELECTED_TOPIC (str): The selected topic.
+    - submissions_after (pd.DataFrame): The DataFrame containing submissions after.
+    - submissions_before (pd.DataFrame): The DataFrame containing submissions before.
+    - comments_after (pd.DataFrame): The DataFrame containing comments after.
+    - comments_before (pd.DataFrame): The DataFrame containing comments before.
+    """
     (
         G_community,
         G_community_before3m,
@@ -702,6 +734,15 @@ def analyze_community(
 
 
 def get_posts_by_community(submission_t, comments_t, metrics):
+    """
+    Retrieves posts by community members from submissions and comments.
+
+    Parameters:
+    - submission_t (pd.DataFrame): The DataFrame containing submissions for a given topic.
+    - comments_t (pd.DataFrame): The DataFrame containing comments for a given topic.
+    - metrics (pd.DataFrame): The DataFrame containing metrics for community members.
+    """
+
     posts_community = submission_t[
         submission_t["id"].isin(
             comments_t[comments_t["author"].isin(metrics.index)].submission_id.unique()
@@ -709,3 +750,107 @@ def get_posts_by_community(submission_t, comments_t, metrics):
     ]
 
     return posts_community
+
+
+def show_top_influencers(metrics, SELECTED_COMMUNITY_IDX, SELECTED_TOPIC):
+    """
+    Shows the top influencers in a community based on influencer scores for a given topic over time.
+
+    Parameters:
+    - metrics (pd.DataFrame): The DataFrame containing metrics for community members.
+    - SELECTED_COMMUNITY_IDX (int): The selected community index.
+    - SELECTED_TOPIC (str): The selected topic.
+    """
+
+    plt.figure(figsize=(16, 9))
+
+    sns.stripplot(
+        data=pd.melt(
+            metrics["influencer_score"]
+            .dropna()
+            .sort_values(by="after", ascending=False)
+            .head(10)
+            .reset_index(),
+            id_vars="author",
+        ),
+        y="author",
+        x="value",
+        hue="time",
+        palette="tab10",
+        dodge=True,
+        s=10,
+    )
+
+    plt.axvline(x=0, color="gray", linestyle="--")
+
+    plt.title(f"Top Influencers in Community {SELECTED_COMMUNITY_IDX}")
+
+    plt.xlabel("Influencer Score")
+    plt.ylabel("Authors")
+
+    plt.legend(title="Time Period")
+    plt.tight_layout()
+
+    plt.savefig(
+        f"./graphs/top_influencers_community_{SELECTED_COMMUNITY_IDX}_{SELECTED_TOPIC}.png",
+    )
+
+    plt.show()
+
+    return None
+
+
+def show_word_comparison(
+    posts_after, posts_before, SELECTED_COMMUNITY_IDX, SELECTED_TOPIC
+):
+    """
+    Shows a comparison of word frequencies before and after in post titles for a given community and topic.
+
+    Parameters:
+    - posts_after (pd.DataFrame): The DataFrame containing posts after.
+    - posts_before (pd.DataFrame): The DataFrame containing posts before.
+    - SELECTED_COMMUNITY_IDX (int): The selected community index.
+    - SELECTED_TOPIC (str): The selected topic.
+    """
+    # Show top words before and after in post title
+    word_comparison = pd.DataFrame(
+        {
+            "After 3 months": posts_after["clean_title"]
+            .apply(str.split)
+            .explode()
+            .value_counts()
+            .head(20),
+            "Before 3 months": posts_before["clean_title"]
+            .apply(str.split)
+            .explode()
+            .value_counts()
+            .head(20),
+        }
+    ).sort_values("After 3 months", ascending=False)
+
+    plt.figure(figsize=(16, 9))
+
+    sns.barplot(
+        data=pd.melt(word_comparison.reset_index(), id_vars="clean_title"),
+        y="clean_title",
+        x="value",
+        hue="variable",
+        palette="tab10",
+    )
+
+    plt.title(
+        f"Comparison of Word Frequencies Before and After 3 Months\nCommunity {SELECTED_COMMUNITY_IDX}\nTopic: {SELECTED_TOPIC}"
+    )
+    plt.xlabel("Frequency")
+    plt.ylabel("Words in Post Titles")
+
+    plt.legend(title="Time Period")
+    plt.tight_layout()
+
+    plt.savefig(
+        f"./graphs/word_comparison_community_{SELECTED_COMMUNITY_IDX}_{SELECTED_TOPIC}.png",
+    )
+
+    plt.show()
+
+    return word_comparison
